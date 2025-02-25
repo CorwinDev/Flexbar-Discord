@@ -29,6 +29,11 @@ async function waitForConnection () {
   })
 }
 
+plugin.on('plugin.alive', (payload) => {
+  console.log('Plugin alive:', payload)
+  waitForConnection()
+})
+
 /**
  * Called when current active window changes
  * {

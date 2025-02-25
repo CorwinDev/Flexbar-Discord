@@ -31,9 +31,7 @@ async function connect (plugin) {
     .then(async () => {
       let accessData
       try {
-        accessData = await plugin.openFile(
-          path.resolve(__dirname, 'data.json')
-        )
+        accessData = await plugin.openFile(path.resolve(__dirname, 'data.json'))
         accessData = JSON.parse(accessData)
       } catch (error) {
         console.log('Error:', error)
