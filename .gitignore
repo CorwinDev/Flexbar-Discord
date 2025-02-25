@@ -4,3 +4,4 @@ logs
 .env
 package-lock.json
 *.flexplugin
+com.corwindev.discord.plugin/backend/data.json
