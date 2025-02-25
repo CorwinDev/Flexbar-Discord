@@ -1,0 +1,74 @@
+{
+    "name": "Discord",
+    "uuid": "com.corwindev.discord",
+    "version": "0.0.1",
+    "author": "CorwinDev",
+    "entry": "backend/plugin.cjs",
+    "description": "Use Discord Voice controls and soundboard!",
+    "repo": "https://github.com/CorwinDev/Flexbar-Discord",
+    "sdk": {
+        "version": "1.0.0"
+    },
+    "software": {
+        "minimumVersion": "1.0.0"
+    },
+    "os": [
+        {
+            "platform": "mac",
+            "minimumVersion": "10.15"
+        },
+        {
+            "platform": "windows",
+            "minimumVersion": "10"
+        }
+    ],
+    "device": [
+        {
+            "name": "flexbar",
+            "version": "1.0.0"
+        }
+    ],
+    "configPage": "",
+    "keyLibrary": {
+        "title": "$PluginName",
+        "style": {
+            "icon": "/discord-mark-white.png"
+        },
+        "children": [
+            {
+                "title": "$Soundboard.Title",
+                "tip": "$Soundboard.Tip",
+                "cid": "com.corwindev.discord.soundboard",
+                "config": {
+                    "keyType": "default",
+                    "clickable": true,
+                    "platform": [
+                        "windows",
+                        "mac"
+                    ]
+                },
+                "style": {
+                    "icon": "mdi mdi-bullhorn-outline",
+                    "width": 240
+                },
+                "data": {
+                    "rangeMin": "0",
+                    "rangeMax": "100"
+                }
+            }
+        ]
+    },
+    "local": {
+        "en": {
+            "PluginName": "Discord",
+            "Soundboard": {
+                "Title": "Trigger Soundboard",
+                "Tip": "Default keys with customizable drawable content",
+                "UI": {
+                    "RangeMin": "Minimum Value",
+                    "RangeMax": "Maximum Value"
+                }
+            }
+        }
+    }
+}

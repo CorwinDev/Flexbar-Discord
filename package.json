@@ -1,0 +1,33 @@
+{
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "npm-run-all plugin:unlink plugin:link -p plugin:watch plugin:debug",
+    "plugin:watch": "rollup -c -w --watch.onEnd=\"npm run plugin:restart\"",
+    "plugin:unlink": "flexcli plugin unlink --uuid com.corwindev.discord --silent",
+    "plugin:link": "flexcli plugin link --path com.corwindev.discord.plugin --uuid com.corwindev.discord --start false",
+    "plugin:restart": "flexcli plugin restart --uuid=com.corwindev.discord",
+    "plugin:debug": "flexcli plugin debug --uuid=com.corwindev.discord",
+    "plugin:validate": "flexcli plugin validate --path com.corwindev.discord.plugin",
+    "plugin:pack": "flexcli plugin pack --path com.corwindev.discord.plugin",
+    "plugin:install": "flexcli plugin install --path ./com.corwindev.discord.flexplugin --force"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.0",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.2.2",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^12.1.0",
+    "glob": "^11.0.1",
+    "npm-run-all": "^4.1.5",
+    "rollup": "^4.0.2"
+  },
+  "dependencies": {
+    "@eniac/flexdesigner": "^1.0.1",
+    "axios": "^1.7.9",
+    "express": "^4.21.2",
+    "open": "^10.1.0",
+    "rpcord": "^1.0.7",
+    "undici": "^7.3.0"
+  }
+}
