@@ -29,12 +29,6 @@ async function waitForConnection () {
   })
 }
 
-// Watch for process exit
-process.on('exit', () => {
-  console.log('Exiting...')
-  rpc.disconnect()
-})
-
 /**
  * Called when current active window changes
  * {
@@ -95,28 +89,6 @@ plugin.on('device.status', devices => {
 })
 
 /**
- * Called when a plugin key is loaded
- * @param {Object} payload alive key data
- * {
- *  serialNumber: '',
- *  keys: []
- * }
- */
-plugin.on('plugin.alive', payload => {
-  logger.info('Plugin alive:', payload)
-  for (let key of payload.keys) {
-    keyData[key.uid] = key
-    if (key.cid === 'com.corwindev.discord.counter') {
-      keyData[key.uid].counter = parseInt(key.data.rangeMin)
-      key.style.showIcon = false
-      key.style.showTitle = true
-      key.title = 'Click Me!'
-      plugin.draw(payload.serialNumber, key, 'draw')
-    }
-  }
-})
-
-/**
  * Called when user interacts with a key
  * @param {object} payload key data
  * {
@@ -124,8 +96,9 @@ plugin.on('plugin.alive', payload => {
  *  data
  * }
  */
-plugin.on('plugin.data', payload => {
+plugin.on('plugin.data', async payload => {
   const data = payload.data
+  console.log(data)
   if (data.key.cid === 'com.corwindev.discord.soundboard') {
     const key = data.key
     // Play sound
@@ -135,6 +108,35 @@ plugin.on('plugin.data', payload => {
         console.error('Error playing sound:', error)
         showError(payload)
       })
+  } else if (data.key.cid === 'com.corwindev.discord.mute') {
+    // Mute
+    const voiceSettings = await rpc.getVoiceSettings().catch(console.error)
+    if (!voiceSettings) return
+    if (voiceSettings.mute)
+      rpc.setVoiceSettings({ mute: false }).catch(error => {
+        showError(payload)
+      })
+    else
+      rpc.setVoiceSettings({ mute: true }).catch(error => {
+        showError(payload)
+      })
+  } else if (data.key.cid === 'com.corwindev.discord.deafen') {
+    // Deafen
+    const voiceSettings = await rpc.getVoiceSettings().catch(console.error)
+    if (!voiceSettings) return
+    if (voiceSettings.deaf)
+      rpc.setVoiceSettings({ deaf: false }).catch(error => {
+        showError(payload)
+      })
+    else
+      rpc.setVoiceSettings({ deaf: true }).catch(error => {
+        showError(payload)
+      })
+  } else if (data.key.cid === 'com.corwindev.discord.camera') {
+    // Toggle camera
+    await rpc.toggleVideo().catch(error => {
+      showError(payload)
+    });
   }
 })
 
@@ -145,14 +147,12 @@ plugin.on('plugin.data', payload => {
 function showError (payload) {
   const key = payload.data.key
   const oldData = structuredClone(key)
-  console.log(key)
   key.style.showIcon = true
   key.style.icon = 'mdi mdi-alert-circle-outline'
   plugin.draw(payload.serialNumber, key, 'draw')
   setTimeout(() => {
     key.style.showIcon = oldData.style.showIcon
     key.style.icon = oldData.icon
-    console.log(key, oldData);
     plugin.draw(payload.serialNumber, oldData, 'draw')
   }, 1000)
 }

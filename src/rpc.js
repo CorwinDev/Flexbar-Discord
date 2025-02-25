@@ -1,4 +1,5 @@
 const { RPClient } = require('rpcord')
+const path = require('path')
 
 var scopes = [
   'identify',
@@ -31,7 +32,7 @@ async function connect (plugin) {
       let accessData
       try {
         accessData = await plugin.openFile(
-          'C:/Users/corwi/Projects/Flex/Discord/src/data.json'
+          path.resolve(__dirname, 'data.json')
         )
         accessData = JSON.parse(accessData)
       } catch (error) {
@@ -47,7 +48,7 @@ async function connect (plugin) {
               expires: data.expires
             }
             await plugin.saveFile(
-              'C:/Users/corwi/Projects/Flex/Discord/src/data.json',
+              path.resolve(__dirname, 'data.json'),
               JSON.stringify(json)
             )
             // Update the access token
@@ -73,7 +74,7 @@ async function connect (plugin) {
             console.log('Data:', data)
             await plugin
               .saveFile(
-                'C:/Users/corwi/Projects/Flex/Discord/src/data.json',
+                path.resolve(__dirname, 'data.json'),
                 JSON.stringify(json)
               )
               .catch(console.error)

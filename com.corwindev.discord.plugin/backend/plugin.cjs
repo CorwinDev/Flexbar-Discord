@@ -29228,6 +29228,8 @@ function requireTypes () {
 		    Command["GetRelationships"] = "GET_RELATIONSHIPS";
 		    Command["GetSoundboardSounds"] = "GET_SOUNDBOARD_SOUNDS";
 		    Command["PlaySoundboardSound"] = "PLAY_SOUNDBOARD_SOUND";
+		    Command["VideoStateUpdate"] = "VIDEO_STATE_UPDATE";
+		    Command["ToggleVideo"] = "TOGGLE_VIDEO";
 		})(exports.Command || (exports.Command = {}));
 		(function (RPCEvent) {
 		    RPCEvent["Ready"] = "READY";
@@ -111911,6 +111913,29 @@ function requireClient () {
 		        }));
 		        return wait;
 		    }
+		    /** Video state update */
+		    async videoStateUpdate(video, timeout = 5000) {
+		        const nonce = uuid_1.v4();
+		        const wait = this.waitFor("videoStateUpdate", (_, n) => n === nonce, timeout).then(() => { });
+		        this.ipc.send(new packet_1.Packet(types_1.OpCode.Frame, {
+		            cmd: types_1.Command.VideoStateUpdate,
+		            args: {
+		                active: video,
+		            },
+		            nonce,
+		        }));
+		        return wait;
+		    }
+		    /** Set the Voice Settings of the Client */
+		    async toggleVideo(timeout = 5000) {
+		        const nonce = uuid_1.v4();
+		        const wait = this.waitFor("toggleVideo", (_, n) => n === nonce, timeout).then(() => { });
+		        this.ipc.send(new packet_1.Packet(types_1.OpCode.Frame, {
+		            cmd: types_1.Command.ToggleVideo,
+		            nonce,
+		        }));
+		        return wait;
+		    }
 		    /** Returns an Array of Entitlements */
 		    async getEntitlements(timeout = 5000) {
 		        const nonce = uuid_1.v4();
@@ -112010,6 +112035,7 @@ function requireRpc () {
 	if (hasRequiredRpc) return rpc_1;
 	hasRequiredRpc = 1;
 	const { RPClient } = requireDist();
+	const path = require$$1$4;
 
 	var scopes = [
 	  'identify',
@@ -112042,7 +112068,7 @@ function requireRpc () {
 	      let accessData;
 	      try {
 	        accessData = await plugin.openFile(
-	          'C:/Users/corwi/Projects/Flex/Discord/src/data.json'
+	          path.resolve(__dirname, 'data.json')
 	        );
 	        accessData = JSON.parse(accessData);
 	      } catch (error) {
@@ -112058,7 +112084,7 @@ function requireRpc () {
 	              expires: data.expires
 	            };
 	            await plugin.saveFile(
-	              'C:/Users/corwi/Projects/Flex/Discord/src/data.json',
+	              path.resolve(__dirname, 'data.json'),
 	              JSON.stringify(json)
 	            );
 	            // Update the access token
@@ -112084,7 +112110,7 @@ function requireRpc () {
 	            console.log('Data:', data);
 	            await plugin
 	              .saveFile(
-	                'C:/Users/corwi/Projects/Flex/Discord/src/data.json',
+	                path.resolve(__dirname, 'data.json'),
 	                JSON.stringify(json)
 	              )
 	              .catch(console.error);
@@ -112107,8 +112133,6 @@ function requirePlugin () {
 	if (hasRequiredPlugin) return plugin$1;
 	hasRequiredPlugin = 1;
 	const { plugin, logger } = requireSrc();
-	// Store key data
-	const keyData = {};
 	const { connect, rpc } = requireRpc();
 
 	/**
@@ -112136,12 +112160,6 @@ function requirePlugin () {
 	    }
 	  })
 	}
-
-	// Watch for process exit
-	process.on('exit', () => {
-	  console.log('Exiting...');
-	  rpc.disconnect();
-	});
 
 	/**
 	 * Called when current active window changes
@@ -112203,28 +112221,6 @@ function requirePlugin () {
 	});
 
 	/**
-	 * Called when a plugin key is loaded
-	 * @param {Object} payload alive key data
-	 * {
-	 *  serialNumber: '',
-	 *  keys: []
-	 * }
-	 */
-	plugin.on('plugin.alive', payload => {
-	  logger.info('Plugin alive:', payload);
-	  for (let key of payload.keys) {
-	    keyData[key.uid] = key;
-	    if (key.cid === 'com.corwindev.discord.counter') {
-	      keyData[key.uid].counter = parseInt(key.data.rangeMin);
-	      key.style.showIcon = false;
-	      key.style.showTitle = true;
-	      key.title = 'Click Me!';
-	      plugin.draw(payload.serialNumber, key, 'draw');
-	    }
-	  }
-	});
-
-	/**
 	 * Called when user interacts with a key
 	 * @param {object} payload key data
 	 * {
@@ -112232,8 +112228,9 @@ function requirePlugin () {
 	 *  data
 	 * }
 	 */
-	plugin.on('plugin.data', payload => {
+	plugin.on('plugin.data', async payload => {
 	  const data = payload.data;
+	  console.log(data);
 	  if (data.key.cid === 'com.corwindev.discord.soundboard') {
 	    const key = data.key;
 	    // Play sound
@@ -112243,6 +112240,35 @@ function requirePlugin () {
 	        console.error('Error playing sound:', error);
 	        showError(payload);
 	      });
+	  } else if (data.key.cid === 'com.corwindev.discord.mute') {
+	    // Mute
+	    const voiceSettings = await rpc.getVoiceSettings().catch(console.error);
+	    if (!voiceSettings) return
+	    if (voiceSettings.mute)
+	      rpc.setVoiceSettings({ mute: false }).catch(error => {
+	        showError(payload);
+	      });
+	    else
+	      rpc.setVoiceSettings({ mute: true }).catch(error => {
+	        showError(payload);
+	      });
+	  } else if (data.key.cid === 'com.corwindev.discord.deafen') {
+	    // Deafen
+	    const voiceSettings = await rpc.getVoiceSettings().catch(console.error);
+	    if (!voiceSettings) return
+	    if (voiceSettings.deaf)
+	      rpc.setVoiceSettings({ deaf: false }).catch(error => {
+	        showError(payload);
+	      });
+	    else
+	      rpc.setVoiceSettings({ deaf: true }).catch(error => {
+	        showError(payload);
+	      });
+	  } else if (data.key.cid === 'com.corwindev.discord.camera') {
+	    // Toggle camera
+	    await rpc.toggleVideo().catch(error => {
+	      showError(payload);
+	    });
 	  }
 	});
 
@@ -112253,14 +112279,12 @@ function requirePlugin () {
 	function showError (payload) {
 	  const key = payload.data.key;
 	  const oldData = structuredClone(key);
-	  console.log(key);
 	  key.style.showIcon = true;
 	  key.style.icon = 'mdi mdi-alert-circle-outline';
 	  plugin.draw(payload.serialNumber, key, 'draw');
 	  setTimeout(() => {
 	    key.style.showIcon = oldData.style.showIcon;
 	    key.style.icon = oldData.icon;
-	    console.log(key, oldData);
 	    plugin.draw(payload.serialNumber, oldData, 'draw');
 	  }, 1000);
 	}

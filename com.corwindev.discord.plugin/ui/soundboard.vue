@@ -4,7 +4,7 @@
     <!-- Show sounds in select -->
     <v-row>
       <v-col cols="12">
-        <v-select :item-props="itemProps" :items="sounds" label="Sound to play" v-model="modelValue.data.sound" @change="$emit('update:modelValue', modelValue)"></v-select>
+        <v-select :item-props="itemProps" :items="sounds" :label="$t('Soundboard.UI.Label')" v-model="modelValue.data.sound" @change="$emit('update:modelValue', modelValue)"></v-select>
       </v-col>
     </v-row>
   </v-container>
@@ -16,7 +16,6 @@ export default {
     modelValue: {
       type: Object,
       required: true,
-
     },
   },
   emits: ['update:modelValue'],
@@ -30,10 +29,12 @@ export default {
       const guilds = await this.$fd.sendToBackend("getGuilds");
       this.guilds = guilds;
       const sounds = await this.$fd.sendToBackend("getSounds");
-      this.sounds = sounds;
-    },
-    testRangeMin() {
-      this.$fd.info(this.modelValue.data.rangeMin);
+      this.sounds = sounds.map(sound => ({
+        sound_id: sound.sound_id,
+        guild_id: sound.guild_id,
+        name: sound.name,
+      }))
+      this.$td.info(this.sounds);
     },
     itemProps(item) {
       var guild = '';
