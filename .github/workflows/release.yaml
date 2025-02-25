@@ -20,6 +20,9 @@ jobs:
 
       - name: Install dependencies
         run: npm i
+    
+      - name: Install FlexCli
+        run: npm install -g @eniac/flexcli
 
       - name: Pack Plugin
         run: npm run plugin:pack
