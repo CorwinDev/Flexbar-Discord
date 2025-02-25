@@ -3,3 +3,4 @@ logs
 .vscode
 .env
 package-lock.json
+*.flexplugin
