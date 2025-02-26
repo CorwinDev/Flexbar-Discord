@@ -102,8 +102,8 @@ plugin.on('device.status', devices => {
  * }
  */
 plugin.on('plugin.data', async payload => {
+  console.log(payload)
   const data = payload.data
-  console.log(data)
   if (data.key.cid === 'com.corwindev.discord.soundboard') {
     const key = data.key
     // Play sound

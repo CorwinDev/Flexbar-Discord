@@ -1,4 +1,4 @@
-const { RPClient } = require('rpcord')
+const { RPClient } = require('@corwinjs/rpcord')
 const path = require('path')
 
 var scopes = [
