@@ -154,10 +154,9 @@ function showError (payload) {
   const oldData = structuredClone(key)
   key.style.showIcon = true
   key.style.icon = 'mdi mdi-alert-circle-outline'
+  key.style.bgColor = '#fa0505'
   plugin.draw(payload.serialNumber, key, 'draw')
   setTimeout(() => {
-    key.style.showIcon = oldData.style.showIcon
-    key.style.icon = oldData.icon
     plugin.draw(payload.serialNumber, oldData, 'draw')
   }, 1000)
 }
