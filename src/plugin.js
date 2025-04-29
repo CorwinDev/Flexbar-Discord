@@ -1,20 +1,23 @@
 const { plugin, logger } = require('@eniac/flexdesigner')
 // Store key data
-const keyData = {}
-const { connect, rpc } = require('./rpc')
+const { connect } = require('./rpc')
+let rpc
 
 /**
  * Helper function to wait for the rpc connection
  */
 async function waitForConnection () {
   return new Promise(async resolve => {
-    if (rpc.connected && rpc.authenticated) {
+    if (rpc && rpc.connected && rpc.authenticated) {
       console.log('rpc:', rpc)
       resolve()
     } else {
-      if (!rpc.connected) {
+      if (!rpc || !rpc.connected) {
         console.log('Connecting...')
-        await connect(plugin)
+        await connect(plugin).then(rpcInstance => {
+          rpc = rpcInstance
+          console.log('Connected to RPC:', rpc)
+        })
         resolve()
       } else {
         // Await authentication
@@ -29,21 +32,11 @@ async function waitForConnection () {
   })
 }
 
-plugin.on('plugin.alive', (payload) => {
-  console.log('Plugin alive:', payload)
-  waitForConnection()
-})
-
-/**
- * Called when current active window changes
- * {
- *    "status": "changed",
- *    "oldWin": OldWindow,
- *    "newWin": NewWindow
- * }
- */
-plugin.on('system.actwin', payload => {
-  // logger.info('Active window changed:', payload)
+plugin.on('plugin.alive', payload => {
+  // console.log(plugin.getConfig(), 'hi')
+  if (plugin.getConfig()) {
+    // waitForConnection()
+  }
 })
 
 /**
@@ -51,6 +44,19 @@ plugin.on('system.actwin', payload => {
  * @param {object} payload message sent from UI
  */
 plugin.on('ui.message', async payload => {
+  if (payload === 'connect-rcp') {
+    return await waitForConnection()
+  } else if (payload === 'disconnect-rpc') {
+    // Disconnect from RPC
+    if (rpc && rpc.connected) {
+      await rpc.disconnect().catch(console.error)
+      console.log('Disconnected from RPC')
+      return
+    } else {
+      console.log('RPC not connected')
+      return
+    }
+  }
   await waitForConnection()
   // If message is getSounds, then wait for rpc connection and get soundboard sounds
   if (payload === 'getSounds') {
@@ -74,26 +80,6 @@ plugin.on('ui.message', async payload => {
 })
 
 /**
- * Called when device status changes
- * @param {object} devices device status data
- * [
- *  {
- *    serialNumber: '',
- *    deviceData: {
- *       platform: '',
- *       profileVersion: '',
- *       firmwareVersion: '',
- *       deviceName: '',
- *       displayName: ''
- *    }
- *  }
- * ]
- */
-plugin.on('device.status', devices => {
-  logger.info('Device status changed:', devices)
-})
-
-/**
  * Called when user interacts with a key
  * @param {object} payload key data
  * {
@@ -103,6 +89,10 @@ plugin.on('device.status', devices => {
  */
 plugin.on('plugin.data', async payload => {
   console.log(payload)
+  if (!rpc || !rpc.connected) {
+    console.log('RPC not connected')
+    await waitForConnection()
+  }
   const data = payload.data
   if (data.key.cid === 'com.corwindev.discord.soundboard') {
     const key = data.key
@@ -141,7 +131,7 @@ plugin.on('plugin.data', async payload => {
     // Toggle camera
     await rpc.toggleVideo().catch(error => {
       showError(payload)
-    });
+    })
   }
 })
 

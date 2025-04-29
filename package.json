@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@corwinjs/rpcord": "^1.2.0",
-    "@eniac/flexdesigner": "^1.0.1",
+    "@eniac/flexdesigner": "^1.0.3",
     "axios": "^1.7.9",
     "express": "^4.21.2",
     "open": "^10.1.0",

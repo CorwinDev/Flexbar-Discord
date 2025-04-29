@@ -14,70 +14,58 @@ var scopes = [
 ]
 
 // Connect to discord ipc
-const rpc = new RPClient('1343527084533743707', {
-  secret: 'xGZ3JQpBGinFB0iYRTHxA4UUt7zsKB6l',
-  scopes: scopes
-})
-
-rpc.on('ready', () => {
-  console.log('Connected!')
-})
 
 console.log('connecting')
 
 async function connect (plugin) {
+  const config = await plugin.getConfig()
+  console.log('Config:', config)
+
+  if (!config.clientId) {
+    console.error('No client ID provided')
+    return
+  }
+
+  var rpc = new RPClient(config.clientId, {
+    secret: config.clientSecret,
+    scopes: scopes
+  })
+
   await rpc
     .connect()
     .then(async () => {
-      let accessData
-      try {
-        accessData = await plugin.openFile(path.resolve(__dirname, 'data.json'))
-        accessData = JSON.parse(accessData)
-      } catch (error) {
-        console.log('Error:', error)
-      }
-      if (accessData) {
-        console.log('Access Data:', accessData)
-        if (Date.now() > accessData.expires) {
+      if (config.accessToken) {
+        if (Date.now() > new Date(accessData.expires).getTime()) {
           await rpc.fetchAccessToken(accessData.authCode).then(async data => {
             const json = {
-              token: data.accessToken,
+              ...config,
+              accessToken: data.accessToken,
               authCode: data.authCode,
               expires: data.expires
             }
-            await plugin.saveFile(
-              path.resolve(__dirname, 'data.json'),
-              JSON.stringify(json)
-            )
-            // Update the access token
-            accessData = json
+            await plugin.setConfig(json)
+            console.log('Updated config:', json)
           })
         }
 
-        await rpc.authenticate(accessData.token).then(async data => {
+        await rpc.authenticate(accessData.accessToken).then(async data => {
           console.log('Authenticated:', data)
-          plugin.showSnackbarMessage('success', 'Connected to Discord')
         })
       } else {
         console.log('No access data')
         await rpc
           .authorize()
           .then(async data => {
-            console.log('Data:', data)
             const json = {
-              token: data.accessToken,
+              ...config,
+              accessToken: data.accessToken,
               authCode: data.authCode,
               expires: data.expires
             }
-            console.log('Data:', data)
-            await plugin
-              .saveFile(
-                path.resolve(__dirname, 'data.json'),
-                JSON.stringify(json)
-              )
-              .catch(console.error)
+            await plugin.setConfig(json)
+            plugin.showSnackbarMessage('success', 'Connected to Discord')
           })
-          .catch(error => console.error('Errcdor:', error))
+          .catch(error => console.error('Errcor:', error))
       }
     })
     .catch(error => console.error('Error:', error))
@@ -85,4 +73,9 @@ async function connect (plugin) {
   return rpc
 }
 
-module.exports = { rpc, connect }
+async function disconnect (rpc) {
+  await rpc.disconnect().catch(error => console.error('Error:', error))
+  console.log('Disconnected')
+}
+
+module.exports = { connect, disconnect }
