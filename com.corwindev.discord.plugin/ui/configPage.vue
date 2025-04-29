@@ -38,12 +38,20 @@
             <v-card-actions class="pa-3">
                 <v-spacer></v-spacer>
                 <v-btn 
-                    v-if="canAuthenticate"
+                    v-if="!isAuthenticated"
                     color="green"
                     variant="flat"
                     @click="authenticateDiscord"
                 >
                     Authenticate
+                </v-btn>
+                <v-btn 
+                    v-if="isAuthenticated && canAuthenticate"
+                    color="red"
+                    variant="flat"
+                    @click="disconnectDiscord"
+                >
+                    Disconnect
                 </v-btn>
                 
                 <v-btn 
@@ -149,7 +157,7 @@ export default {
                 await this.saveConfig();
                 
                 // Send authentication request to the backend plugin
-                await this.$fd.sendToBackend('tryConnect');
+                await this.$fd.sendToBackend('authenticate');
 
                 // Get the updated config with tokens from backend
                 const updatedConfig = await this.$fd.getConfig();

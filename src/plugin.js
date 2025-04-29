@@ -44,7 +44,7 @@ plugin.on('plugin.alive', payload => {
  * @param {object} payload message sent from UI
  */
 plugin.on('ui.message', async payload => {
-  if (payload === 'connect-rcp') {
+  if (payload === 'authenticate') {
     return await waitForConnection()
   } else if (payload === 'disconnect-rpc') {
     // Disconnect from RPC
