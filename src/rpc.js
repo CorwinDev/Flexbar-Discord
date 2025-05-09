@@ -1,5 +1,4 @@
 const { RPClient } = require('@corwinjs/rpcord')
-const path = require('path')
 
 var scopes = [
   'identify',
@@ -35,8 +34,8 @@ async function connect (plugin) {
     .connect()
     .then(async () => {
       if (config.accessToken) {
-        if (Date.now() > new Date(accessData.expires).getTime()) {
-          await rpc.fetchAccessToken(accessData.authCode).then(async data => {
+        if (Date.now() > new Date(config.expires).getTime()) {
+          await rpc.fetchAccessToken(config.authCode).then(async data => {
             const json = {
               ...config,
               accessToken: data.accessToken,
@@ -48,7 +47,7 @@ async function connect (plugin) {
           })
         }
 
-        await rpc.authenticate(accessData.accessToken).then(async data => {
+        await rpc.authenticate(config.accessToken).then(async data => {
           console.log('Authenticated:', data)
         })
       } else {
