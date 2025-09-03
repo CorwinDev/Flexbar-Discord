@@ -20,6 +20,10 @@
         {
             "platform": "windows",
             "minimumVersion": "10"
+        },
+        {
+            "platform": "linux",
+            "minimumVersion": "20.04"
         }
     ],
     "device": [
@@ -44,7 +48,8 @@
                     "clickable": true,
                     "platform": [
                         "windows",
-                        "mac"
+                        "mac",
+                        "linux"
                     ]
                 },
                 "style": {
@@ -66,7 +71,8 @@
                     "clickable": true,
                     "platform": [
                         "windows",
-                        "mac"
+                        "mac",
+                        "linux"
                     ]
                 },
                 "style": {
@@ -84,7 +90,8 @@
                     "clickable": true,
                     "platform": [
                         "windows",
-                        "mac"
+                        "mac",
+                        "linux"
                     ]
                 },
                 "style": {
@@ -102,7 +109,8 @@
                     "clickable": true,
                     "platform": [
                         "windows",
-                        "mac"
+                        "mac",
+                        "linux"
                     ]
                 },
                 "style": {
