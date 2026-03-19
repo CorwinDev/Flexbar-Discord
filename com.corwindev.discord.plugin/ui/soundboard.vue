@@ -55,4 +55,8 @@ export default {
 };
 </script>
 
-<style scoped></style>
+<style scoped>
+  .v-container {
+     min-height: 200px;
+   }
+</style>
