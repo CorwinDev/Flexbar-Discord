@@ -1,223 +1,196 @@
 <template>
-    <v-container>
-        <!-- API Configuration Card -->
-        <v-card elevation="2" class="mb-4 rounded-lg">
-            <v-card-item>
-                <v-card-title>Discord Configuration</v-card-title>
-                <v-card-subtitle>{{ isAuthenticated ? 'Connected to Discord' : 'Enter your Discord App credentials' }}</v-card-subtitle>
-            </v-card-item>
-            <v-divider></v-divider>
-            <v-card-text>
-                <v-text-field 
-                    v-model="modelValue.config.clientId" 
-                    label="Discord Client ID" 
-                    outlined 
-                    density="compact"
-                    hide-details="auto"
-                    class="mb-3"
-                ></v-text-field>
-                
-                <v-text-field 
-                    v-model="modelValue.config.clientSecret" 
-                    label="Discord Client Secret" 
-                    outlined 
-                    density="compact"
-                    hide-details="auto"
-                    type="password"
-                    class="mb-3"
-                ></v-text-field>
-                
-                <v-alert
-                    v-if="isAuthenticated"
-                    type="success"
-                    text="Connected to Discord"
-                    density="compact"
-                    class="mt-3"
-                ></v-alert>
-            </v-card-text>
-            <v-card-actions class="pa-3">
-                <v-spacer></v-spacer>
-                <v-btn 
-                    v-if="!isAuthenticated"
-                    color="green"
-                    variant="flat"
-                    @click="authenticateDiscord"
-                >
-                    Authenticate
-                </v-btn>
-                <v-btn 
-                    v-if="isAuthenticated && canAuthenticate"
-                    color="red"
-                    variant="flat"
-                    @click="disconnectDiscord"
-                >
-                    Disconnect
-                </v-btn>
-                
-                <v-btn 
-                    variant="tonal" 
-                    @click="saveConfig" 
-                    prepend-icon="mdi-content-save-outline"
-                    class="ml-2"
-                    :disabled="isInitializing"
-                >
-                    Save
-                </v-btn>
-            </v-card-actions>
-        </v-card>
-    </v-container>
+  <v-container>
+    <v-card elevation="2" class="mb-4 rounded-lg">
+      <v-card-item>
+        <v-card-title>Discord Configuration</v-card-title>
+        <v-card-subtitle>{{ statusText }}</v-card-subtitle>
+      </v-card-item>
+      <v-divider></v-divider>
+      <v-card-text>
+        <v-text-field
+          v-model="clientId"
+          label="Discord Client ID"
+          density="compact"
+          hide-details="auto"
+          class="mb-3"
+          :disabled="isBusy"
+        ></v-text-field>
+        <v-text-field
+          v-model="clientSecret"
+          label="Discord Client Secret"
+          type="password"
+          density="compact"
+          hide-details="auto"
+          class="mb-3"
+          :disabled="isBusy"
+        ></v-text-field>
+        <v-alert
+          v-if="isAuthenticated"
+          type="success"
+          text="Connected to Discord"
+          density="compact"
+          class="mt-3"
+        ></v-alert>
+        <v-alert
+          v-else-if="error"
+          type="error"
+          :text="error"
+          density="compact"
+          class="mt-3"
+        ></v-alert>
+      </v-card-text>
+      <v-card-actions class="pa-3">
+        <v-spacer></v-spacer>
+        <v-btn
+          v-if="!isAuthenticated"
+          color="green"
+          variant="flat"
+          @click="authenticateDiscord"
+          :loading="isBusy"
+          :disabled="isInitializing || isBusy || !canAuthenticate"
+          >Authenticate</v-btn
+        >
+        <v-btn
+          v-if="canDisconnect || isBusy"
+          color="red"
+          variant="flat"
+          @click="disconnectDiscord"
+          :disabled="isInitializing"
+          >Disconnect</v-btn
+        >
+        <v-btn
+          variant="tonal"
+          @click="saveConfig"
+          prepend-icon="mdi-content-save-outline"
+          class="ml-2"
+          :disabled="isInitializing || isBusy"
+          >Save</v-btn
+        >
+      </v-card-actions>
+    </v-card>
+  </v-container>
 </template>
 
 <script>
 export default {
-    props: {
-        modelValue: {
-            type: Object,
-            required: true,
-        },
+  props: { modelValue: { type: Object, required: true } },
+  data() {
+    return {
+      clientId: "",
+      clientSecret: "",
+      state: "disconnected",
+      error: null,
+      isBusy: false,
+      canDisconnect: false,
+      isInitializing: true,
+      pollTimer: null,
+      disposed: false,
+      statusEpoch: 0,
+    };
+  },
+  computed: {
+    canAuthenticate() {
+      return this.clientId.trim() && this.clientSecret.trim();
     },
-    data() {
-        return {
-            isAuthenticated: false,
-            isInitializing: false,
-        };
+    isAuthenticated() {
+      return this.state === "ready";
     },
-    computed: {
-        canAuthenticate() {
-            return this.modelValue.config.clientId && 
-                   this.modelValue.config.clientSecret
+    statusText() {
+      if (this.isAuthenticated) return "Connected to Discord";
+      if (this.state === "connecting") return "Connecting to Discord…";
+      if (this.state === "authenticating") return "Waiting for Discord authorization…";
+      return "Enter your Discord App credentials";
+    },
+  },
+  methods: {
+    applyStatus(status) {
+      this.state = status.state;
+      this.error = status.error;
+      this.canDisconnect = !!status.enabled;
+      this.isBusy = status.state === "connecting" || status.state === "authenticating";
+    },
+    async persistSettings() {
+      // Credentials and token rotation are serialized by the backend. The UI never writes token snapshots.
+      const status = await this.$fd.sendToBackend({
+        command: "save-settings",
+        clientId: this.clientId,
+        clientSecret: this.clientSecret,
+      });
+      this.modelValue.config = {
+        clientId: this.clientId.trim(),
+        clientSecret: this.clientSecret.trim(),
+      };
+      return status;
+    },
+    async saveConfig() {
+      this.statusEpoch++;
+      try {
+        this.applyStatus(await this.persistSettings());
+      } catch (error) {
+        this.error = error.message;
+      }
+    },
+    async authenticateDiscord() {
+      if (this.isBusy) return;
+      this.statusEpoch++;
+      this.isBusy = true;
+      this.error = null;
+      try {
+        await this.persistSettings();
+        this.applyStatus(await this.$fd.sendToBackend("authenticate"));
+      } catch (error) {
+        this.error = error.message;
+        this.isBusy = false;
+      }
+    },
+    async disconnectDiscord() {
+      this.statusEpoch++;
+      try {
+        this.applyStatus(await this.$fd.sendToBackend("disconnectDiscord"));
+        this.isBusy = false;
+      } catch (error) {
+        this.error = error.message;
+      }
+    },
+    async pollStatus() {
+      if (this.disposed) return;
+      const epoch = this.statusEpoch;
+      try {
+        const status = await this.$fd.sendToBackend("status");
+        if (!this.disposed && epoch === this.statusEpoch) this.applyStatus(status);
+      } catch (error) {
+        if (!this.disposed && epoch === this.statusEpoch) {
+          this.state = "disconnected";
+          this.error = error.message;
+          this.isBusy = false;
         }
+      } finally {
+        if (!this.disposed) this.pollTimer = setTimeout(() => this.pollStatus(), 1000);
+      }
     },
-    watch: {
-        'modelValue.config': {
-            handler: function(newConfig) {
-                if (this.isInitializing) return;
-                
-                this.$fd.info('Config changed:', newConfig);
-                this.checkAuthStatus();
-            },
-            deep: true,
-            immediate: true
-        }
-    },
-    methods: {
-        async saveConfig() {
-            this.$fd.info('Saving config:', this.modelValue.config);
-            
-            try {
-                // First get the current config to make sure we don't override tokens
-                const currentConfig = await this.$fd.getConfig();
-                
-                // Preserve important authentication data
-                const updatedConfig = {
-                    ...currentConfig,
-                    // Only update fields that should be controlled by the UI
-                    clientId: this.modelValue.config.clientId,
-                    clientSecret: this.modelValue.config.clientSecret,
-                };
-                
-                // Save the merged config
-                await this.$fd.setConfig(updatedConfig);
-                
-                // Update the local model with the full config
-                this.modelValue.config = updatedConfig;
-            } catch (error) {
-                this.$fd.error('Failed to save config:', error);
-            }
-        },
-        async initializeConfig() {
-            // Set flag to prevent watcher from triggering recursively
-            this.isInitializing = true;
-            
-            try {
-                // get config from local file
-                const config = await this.$fd.getConfig();
-                
-                // Merge with existing config
-                if (config) {
-                    this.modelValue.config = config;
-                } else if (!this.modelValue.config) {
-                    this.modelValue.config = {};
-                }
-                
-                this.$fd.info('initializeConfig', this.modelValue.config);
-                
-                return true;
-            } catch (error) {
-                this.$fd.error('Failed to initialize config:', error);
-                return false;
-            } finally {
-                // Reset flag when done
-                this.isInitializing = false;
-            }
-        },
-        async authenticateDiscord() {
-            try {
-                // Save the configuration first to ensure the backend has the latest credentials
-                await this.saveConfig();
-                
-                // Send authentication request to the backend plugin
-                await this.$fd.sendToBackend('authenticate');
-
-                // Get the updated config with tokens from backend
-                const updatedConfig = await this.$fd.getConfig();
-                
-                // Update our local model with the full config including tokens
-                this.modelValue.config = updatedConfig;
-            } catch (error) {
-                this.$fd.showSnackbarMessage('Error', error.message, 'error');
-            }
-        },
-        async disconnectDiscord() {
-            try {
-                // Get current config
-                const currentConfig = await this.$fd.getConfig();
-
-                await this.$fd.sendToBackend('disconnectDiscord');
-                
-                // Create a new config without authentication data
-                const updatedConfig = {
-                    ...currentConfig,
-                    accessToken: null,
-                    authCode: null,
-                    expires: null,
-                };
-                
-                // Save the updated config
-                await this.$fd.setConfig(updatedConfig);
-                
-                // Update the local model
-                this.modelValue.config = updatedConfig;
-            } catch (error) {
-
-            }
-        },
-        checkAuthStatus() {
-            // Check if we have valid authentication configuration
-            this.isAuthenticated = !!(
-                this.modelValue.config && 
-                this.modelValue.config.accessToken &&
-                this.modelValue.config.authCode
-            );
-            this.$fd.info('Auth status checked:', this.isAuthenticated);
-        },
-    },
-    created() {
-        this.$fd.info('Component created, modelValue:', this.modelValue);
-    },
-    mounted() {
-        this.$fd.info('Component mounted, modelValue:', this.modelValue);
-        
-        this.initializeConfig().then(() => {
-            this.checkAuthStatus();
-        });
+  },
+  async mounted() {
+    try {
+      const config = (await this.$fd.getConfig()) || {};
+      if (this.disposed) return;
+      this.clientId = config.clientId || "";
+      this.clientSecret = config.clientSecret || "";
+    } catch (error) {
+      this.error = error.message;
+    } finally {
+      this.isInitializing = false;
     }
+    this.pollStatus();
+  },
+  beforeUnmount() {
+    this.disposed = true;
+    clearTimeout(this.pollTimer);
+  },
 };
 </script>
 
 <style scoped>
-/* Add specific styles if needed */
 .v-card-item {
-    padding-bottom: 12px; /* Adjust spacing */
+  padding-bottom: 12px;
 }
 </style>

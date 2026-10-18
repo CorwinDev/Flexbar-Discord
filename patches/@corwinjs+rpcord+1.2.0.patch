@@ -1,0 +1,260 @@
+diff --git a/node_modules/@corwinjs/rpcord/dist/client.js b/node_modules/@corwinjs/rpcord/dist/client.js
+index e005477..b663d05 100644
+--- a/node_modules/@corwinjs/rpcord/dist/client.js
++++ b/node_modules/@corwinjs/rpcord/dist/client.js
+@@ -48,6 +48,8 @@ class RPClient extends events_1.EventEmitter {
+         /** Whether Client is connected or not */
+         this.connected = false;
+         this._subscribed = [];
++        this._requests = new Map();
++        this.on("error", () => {});
+         this.id = id;
+         if (options) {
+             this.secret = options.secret;
+@@ -55,7 +57,12 @@ class RPClient extends events_1.EventEmitter {
+         }
+         this.ipc = new ipc_1.DiscordIPC();
+         this.ipc.on("connect", () => (this.connected = true));
+-        this.ipc.on("close", () => (this.connected = false));
++        this.ipc.on("close", (error) => {
++            this.connected = this.authenticated = false;
++            for (const request of this._requests.values()) { clearTimeout(request.timer); request.reject(error); }
++            this._requests.clear();
++            this.emit("disconnect", error);
++        });
+         this.ipc.on("packet", (packet) => this.processPacket(packet));
+         this.lobbyManager = new lobby_1.LobbyManager(this);
+         this.achievementManager = new achievement_1.AchievementManager(this);
+@@ -65,15 +72,30 @@ class RPClient extends events_1.EventEmitter {
+     }
+     processPacket(packet) {
+         if (packet.op == types_1.OpCode.Close) {
+-            throw new Error(`Discord IPC Closed (${packet.data.code}): ${packet.data.message}`);
++            const code = packet.data.code;
++            const kind = code === 4003 ? "AUTH_REQUIRED" : [4000, 4001].includes(code) ? "INVALID_CREDENTIALS" : [4004, 4005].includes(code) ? "RPC_UNSUPPORTED" : code;
++            this.ipc.close(Object.assign(new Error("Discord closed the RPC session"), { code: kind }));
++            return;
+         }
+         switch (packet.op) {
+             case types_1.OpCode.Frame:
+                 const cmd = packet.data.cmd;
+                 const data = packet.data.data;
+                 const nonce = packet.data.nonce;
++                const request = this._requests.get(nonce);
++                if (request) {
++                    this._requests.delete(nonce);
++                    clearTimeout(request.timer);
++                    if (packet.data.evt === "ERROR") request.reject(Object.assign(new Error(`Discord rejected ${cmd}`), { code: data?.code }));
++                    else {
++                        if (cmd === types_1.Command.Authenticate) { this.authenticated = true; this.user = data.user; this.expires = data.expires; }
++                        request.resolve(data);
++                    }
++                    return;
++                }
+                 if (packet.data.evt && packet.data.evt == "ERROR") {
+                     this.emit("error", data, nonce);
++                    this.ipc.close(Object.assign(new Error(data?.message || "Discord RPC session failed"), { code: data?.code }));
+                 }
+                 else {
+                     const evt = cmd
+@@ -181,10 +203,24 @@ class RPClient extends events_1.EventEmitter {
+         }));
+         return wait;
+     }
++    request(command, args = {}, timeout = 5000, event) {
++        if (!this.connected || this.ipc.closed) return Promise.reject(new Error("Discord disconnected"));
++        return new Promise((resolve, reject) => {
++            const nonce = uuid_1.v4();
++            const timer = setTimeout(() => {
++                this._requests.delete(nonce);
++                reject(Object.assign(new Error(`Discord ${command} timed out`), { code: "TIMEOUT" }));
++            }, timeout);
++            this._requests.set(nonce, { resolve, reject, timer });
++            try {
++                this.ipc.send(new packet_1.Packet(types_1.OpCode.Frame, { cmd: command, args, nonce, ...(event ? { evt: event } : {}) }));
++            } catch (error) { this.ipc.close(error); }
++        });
++    }
+     /** Connect to Discord IPC. */
+     async connect() {
+         await this.ipc.connect();
+-        const wait = this.waitFor("ready").then(() => this);
++        const wait = this.waitFor("ready", () => true, 5000).then(() => this);
+         this.ipc.send(new packet_1.Packet(types_1.OpCode.Handshake, {
+             v: 1,
+             client_id: this.id,
+@@ -536,41 +572,26 @@ class RPClient extends events_1.EventEmitter {
+         return wait;
+     }
+     /** Wait for an event to fire */
+-    async waitFor(event, checkFunction = () => true, timeout) {
+-        return await new Promise((resolve, reject) => {
+-            let timeoutID;
+-            if (timeout !== undefined) {
+-                timeoutID = setTimeout(() => {
+-                    this.off(event, eventFunc);
+-                    this.off("error", errorFunc);
+-                    reject(new Error("Timed out: " + event));
+-                }, timeout);
+-            }
+-            const eventFunc = (...args) => {
+-                if (checkFunction(...args)) {
+-                    this.off(event, eventFunc);
+-                    this.off("error", errorFunc);
+-                    if (timeoutID !== undefined)
+-                        clearTimeout(timeoutID);
+-                    resolve(args);
+-                }
+-            };
+-            const errorFunc = (...args) => {
+-                if (checkFunction(...args)) {
+-                    this.off(event, eventFunc);
+-                    this.off("error", errorFunc);
+-                    if (timeoutID !== undefined)
+-                        clearTimeout(timeoutID);
+-                    reject(args[0]);
+-                }
++    async waitFor(event, checkFunction = () => true, timeout = 5000) {
++        return new Promise((resolve, reject) => {
++            const cleanup = () => {
++                clearTimeout(timer);
++                this.off(event, receive);
++                this.off("error", failed);
++                this.off("disconnect", closed);
+             };
+-            this.on("error", errorFunc);
+-            this.on(event, eventFunc);
++            const receive = (...args) => { if (checkFunction(...args)) { cleanup(); resolve(args); } };
++            const failed = (...args) => { if (checkFunction(...args)) { cleanup(); reject(args[0]); } };
++            const closed = (error) => { cleanup(); reject(error); };
++            const timer = setTimeout(() => closed(Object.assign(new Error(`Discord ${event} timed out`), { code: "TIMEOUT" })), timeout);
++            this.on(event, receive);
++            this.on("error", failed);
++            this.on("disconnect", closed);
+         });
+     }
+     /** Disconnect from Discord IPC */
+-    disconnect() {
+-        this.ipc.close();
++    disconnect(error) {
++        this.ipc.close(error);
+         this.connected = false;
+     }
+ }
+diff --git a/node_modules/@corwinjs/rpcord/dist/ipc.js b/node_modules/@corwinjs/rpcord/dist/ipc.js
+index 4a9fb12..2bd0e4c 100644
+--- a/node_modules/@corwinjs/rpcord/dist/ipc.js
++++ b/node_modules/@corwinjs/rpcord/dist/ipc.js
+@@ -8,44 +8,67 @@ const packet_1 = require("./packet");
+ const uuid_1 = require("uuid");
+ async function findIPC(id = 0) {
+     return new Promise((res, rej) => {
++        const prefixes = [...new Set([process.env.XDG_RUNTIME_DIR, process.env.TMPDIR, process.env.TMP, process.env.TEMP, "/tmp"].filter(Boolean))];
++        const paths = process.platform === "win32"
++            ? Array.from({ length: 10 }, (_, i) => util_1.getIPCPath(i))
++            : prefixes.flatMap(prefix => Array.from({ length: 10 }, (_, i) => require("path").join(prefix, `discord-ipc-${i}`)));
+         let socket;
+-        if (id > 9)
++        if (id >= paths.length)
+             return rej(new Error("Failed to find Discord IPC"));
+-        socket = net_1.connect(util_1.getIPCPath(id));
++        socket = net_1.connect(paths[id]);
+         socket.once("connect", () => {
++            clearTimeout(timer);
+             socket.removeAllListeners("connect");
+             socket.removeAllListeners("error");
+             res(socket);
+         });
+         socket.once("error", () => {
++            clearTimeout(timer);
++            socket.destroy();
+             res(findIPC(id + 1));
+         });
++        const timer = setTimeout(() => socket.destroy(new Error("Discord IPC connection timed out")), 500);
+     });
+ }
+ exports.findIPC = findIPC;
+ class DiscordIPC extends events_1.EventEmitter {
+     async connect() {
+-        this.socket = await findIPC();
++        const socket = await findIPC();
++        if (this.closed) { socket.destroy(); throw new Error("Discord connection cancelled"); }
++        this.socket = socket;
++        this.buffer = Buffer.alloc(0);
+         this.emit("connect");
+-        this.socket.on("data", (buffer) => {
+-            const packet = packet_1.Packet.tryParse(buffer);
+-            if (packet) {
+-                this.emit("packet", packet);
+-            }
++        socket.on("data", (chunk) => {
++            this.buffer = Buffer.concat([this.buffer, chunk]);
++            try {
++                while (this.buffer.length >= 8) {
++                    const length = this.buffer.readUInt32LE(4);
++                    if (length > 8 * 1024 * 1024) throw new Error("Oversized Discord IPC frame");
++                    if (this.buffer.length < 8 + length) return;
++                    const packet = packet_1.Packet.parse(this.buffer.subarray(0, 8 + length));
++                    this.buffer = this.buffer.subarray(8 + length);
++                    this.emit("packet", packet);
++                    if (this.closed) return;
++                }
++            } catch (error) { this.close(error); }
+         });
+-        this.socket.on("close", () => this.emit("close"));
++        socket.on("error", (error) => this.close(error));
++        socket.on("close", () => this.close());
+     }
+     send(packet) {
+         var _a;
+-        if (!packet.data.nonce)
++        if (!Buffer.isBuffer(packet.data) && !packet.data.nonce)
+             packet.data.nonce = uuid_1.v4();
+         (_a = this.socket) === null || _a === void 0 ? void 0 : _a.write(packet.encode());
+         return packet.data.nonce;
+     }
+-    close() {
+-        var _a;
+-        (_a = this.socket) === null || _a === void 0 ? void 0 : _a.end();
++    close(error = Object.assign(new Error("Discord disconnected"), { code: "CONNECTION_CLOSED" })) {
++        if (this.closed) return;
++        this.closed = true;
++        this.socket?.destroy();
+         this.socket = undefined;
++        this.buffer = Buffer.alloc(0);
++        this.emit("close", error);
+     }
+ }
+ exports.DiscordIPC = DiscordIPC;
+diff --git a/node_modules/@corwinjs/rpcord/dist/packet.js b/node_modules/@corwinjs/rpcord/dist/packet.js
+index 97845a3..37c09c2 100644
+--- a/node_modules/@corwinjs/rpcord/dist/packet.js
++++ b/node_modules/@corwinjs/rpcord/dist/packet.js
+@@ -7,23 +7,23 @@ class Packet {
+         this.data = data !== null && data !== void 0 ? data : {};
+     }
+     encode() {
+-        const data = JSON.stringify(this.data);
++        const data = Buffer.isBuffer(this.data) ? this.data : Buffer.from(JSON.stringify(this.data));
+         const len = Buffer.byteLength(data);
+         const buf = Buffer.alloc(8 + len);
+         buf.writeInt32LE(this.op, 0);
+         buf.writeInt32LE(len, 4);
+-        buf.write(data, 8);
++        data.copy(buf, 8);
+         return buf;
+     }
+     static parse(data) {
+-        const buf = data instanceof Uint8Array ? Buffer.from(data.buffer) : Buffer.from(data);
++        const buf = Buffer.from(data);
+         const op = buf.readInt32LE(0);
+         const len = buf.readInt32LE(4);
+         const json = buf
+             .slice(8, len + 8)
+             .toString()
+             .trim();
+-        return new Packet(op, JSON.parse(json));
++        return new Packet(op, op === 3 || op === 4 ? buf.subarray(8, len + 8) : JSON.parse(json));
+     }
+     static tryParse(data) {
+         try {

@@ -1,0 +1,138 @@
+diff --git a/node_modules/@eniac/flexdesigner/dist/plugin_client.js b/node_modules/@eniac/flexdesigner/dist/plugin_client.js
+index a54c550..420ba00 100644
+--- a/node_modules/@eniac/flexdesigner/dist/plugin_client.js
++++ b/node_modules/@eniac/flexdesigner/dist/plugin_client.js
+@@ -1,6 +1,6 @@
+ // plugin_client.js
+ // This file handles plugin-side WebSocket logic.
+-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
++var __awaiter = function (thisArg, _arguments, P, generator) {
+     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+     return new (P || (P = Promise))(function (resolve, reject) {
+         function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+@@ -48,6 +48,7 @@ class Plugin {
+      * @return {void}
+      */
+     start() {
++        if (this.stopped || this.ws && this.ws.readyState < 2) return;
+         const { port, uid, dir } = this._parseCommandLineArgs();
+         if (!port || !uid || !dir) {
+             console.error('Usage: node plugin_client.js --port=<port> --uid=<uid> --dir=<dir>');
+@@ -59,35 +60,31 @@ class Plugin {
+         this.directory = dir;
+         this.serverUrl = `ws://localhost:${port}`;
+         this.ws = new WebSocket(this.serverUrl);
++        const socket = this.ws;
+         this.ws.on('open', () => {
+             logger.info(`Connected to server at ${this.serverUrl}`);
+             const initCmd = new PluginCommand('startup', {
+                 pluginID: uid,
+             });
+             logger.debug(`Sending init command: ${initCmd.toString()}`);
+-            this.ws.send(JSON.stringify(initCmd.toJSON()));
++            socket.send(JSON.stringify(initCmd.toJSON()));
++            Promise.resolve().then(() => this.onConnect?.()).catch((error) => logger.warn(error.message));
+         });
+         this.ws.on('message', (msg) => {
+             this._handleMessage(msg).catch((err) => {
+                 logger.error(`Error handling message: ${err.message}`);
+             });
+         });
+-        this.ws.on('close', () => {
+-            logger.warn('Connection closed');
+-            // Retry connection
+-            logger.info('Retrying connection in 5 seconds...');
+-            setTimeout(() => {
+-                this.start();
+-            }, 5000);
+-        });
+-        this.ws.on('error', (err) => {
+-            logger.error(`WebSocket error: ${err.message}`);
+-            // Retry connection
+-            logger.info('Retrying connection in 5 seconds...');
+-            setTimeout(() => {
+-                this.start();
+-            }, 5000);
+-        });
++        const disconnected = () => {
++            if (this.ws !== socket) return;
++            this.ws = null;
++            socket.terminate();
++            for (const call of Object.values(this.pendingCalls)) { clearTimeout(call.timer); call.reject(new Error("FlexDesigner disconnected")); }
++            this.pendingCalls = {};
++            if (!this.stopped) this.retryTimer = setTimeout(() => this.start(), 5000);
++        };
++        socket.on('close', disconnected);
++        socket.on('error', disconnected);
+         // Register default handlers
+         this.on('ui.log', (payload) => {
+             /*
+@@ -104,6 +101,13 @@ class Plugin {
+             }
+         });
+     }
++    stop() {
++        this.stopped = true;
++        clearTimeout(this.retryTimer);
++        this.ws?.terminate();
++        for (const call of Object.values(this.pendingCalls)) { clearTimeout(call.timer); call.reject(new Error("Plugin stopped")); }
++        this.pendingCalls = {};
++    }
+     /**
+      * @brief Parses command-line arguments to extract port, uid, and dir.
+      *
+@@ -147,6 +151,7 @@ class Plugin {
+      * @returns {Promise<any>} A promise that resolves with the response payload or rejects with an error.
+      */
+     _call(command, payload, timeout = 5000) {
++        if (this.stopped || this.ws?.readyState !== 1) return Promise.reject(new Error("FlexDesigner disconnected"));
+         return new Promise((resolve, reject) => {
+             const cmd = new PluginCommand(command, payload);
+             this.pendingCalls[cmd.uuid] = {
+@@ -157,10 +162,11 @@ class Plugin {
+             if (timeout > 0) {
+                 this.pendingCalls[cmd.uuid].timer = setTimeout(() => {
+                     delete this.pendingCalls[cmd.uuid];
+-                    reject(new Error(`Request timed out, command: ${command}, payload: ${JSON.stringify(payload)}`));
++                    reject(new Error(`Request timed out, command: ${command}`));
+                 }, timeout);
+             }
+-            this.ws.send(JSON.stringify(cmd.toJSON()));
++            try { this.ws.send(JSON.stringify(cmd.toJSON())); }
++            catch (error) { clearTimeout(this.pendingCalls[cmd.uuid]?.timer); delete this.pendingCalls[cmd.uuid]; reject(error); }
+         });
+     }
+     /**
+@@ -202,9 +208,11 @@ class Plugin {
+             // If it's a broadcast or direct send
+             const handler = this.handlers[cmd.type];
+             if (handler) {
+-                const result = yield handler(cmd.payload);
+-                const response = new PluginCommand('response', result, cmd.uuid, 'success');
+-                this.ws.send(JSON.stringify(response.toJSON()));
++                const socket = this.ws;
++                let response;
++                try { response = new PluginCommand('response', yield handler(cmd.payload), cmd.uuid, 'success'); }
++                catch (error) { response = new PluginCommand('response', error.message, cmd.uuid, 'error', error.message); }
++                if (socket?.readyState === 1 && this.ws === socket) socket.send(JSON.stringify(response.toJSON()));
+             }
+         });
+     }
+@@ -524,7 +532,7 @@ class Plugin {
+         return this._call("api-call", {
+             api: "getPluginConfig",
+             pluginID: this.uuid,
+-        }, 0);
++        }, 5000);
+     }
+     /**
+      * @brief Set the plugin configuration.
+@@ -538,7 +546,7 @@ class Plugin {
+             api: "setPluginConfig",
+             pluginID: this.uuid,
+             config
+-        }, 0);
++        }, 5000);
+     }
+ }
+ /**

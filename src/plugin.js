@@ -1,155 +1,175 @@
-const { plugin, logger } = require('@eniac/flexdesigner')
-// Store key data
-const { connect } = require('./rpc')
-let rpc
+const { DiscordConnection } = require("./rpc");
+const { plugin } = require("@eniac/flexdesigner");
+const { VoiceState } = require("./voice-state");
+const { createSoundPreparer, decorateKey, soundData, groupSounds } = require("./soundboard");
 
-/**
- * Helper function to wait for the rpc connection
- */
-async function waitForConnection () {
-  return new Promise(async resolve => {
-    if (rpc && rpc.connected && rpc.authenticated) {
-      console.log('rpc:', rpc)
-      resolve()
-    } else {
-      if (!rpc || !rpc.connected) {
-        console.log('Connecting...')
-        await connect(plugin).then(rpcInstance => {
-          rpc = rpcInstance
-          console.log('Connected to RPC:', rpc)
-        })
-        resolve()
-      } else {
-        // Await authentication
-        const interval = setInterval(() => {
-          if (rpc.authenticated) {
-            clearInterval(interval)
-            resolve()
-          }
-        }, 1000)
+function registerPlugin(plugin) {
+  const connection = new DiscordConnection(plugin);
+  const voice = new VoiceState(plugin, connection);
+  const prepareSound = createSoundPreparer(connection);
+
+  const toggle = (field) =>
+    connection.run(async (client) => {
+      const beforeRead = voice.revision;
+      const settings = await client.getVoiceSettings();
+
+      voice.apply(settings, client, beforeRead);
+
+      const revision = voice.revision;
+      const result = await client.setVoiceSettings({
+        [field]: !settings[field],
+      });
+
+      voice.apply(result, client, revision);
+
+      if (typeof result?.mute !== "boolean" || typeof result?.deaf !== "boolean")
+        await voice.refresh(client);
+
+      return result;
+    });
+
+  const restore = () =>
+    connection.restore().catch((error) => console.warn(`Discord: ${error.message}`));
+
+  plugin.onConnect = restore;
+
+  plugin.on("plugin.alive", (payload) => {
+    voice.setKeys(payload.serialNumber, payload.keys || []);
+    restore();
+  });
+
+  plugin.on("device.status", (statuses) => {
+    for (const device of statuses || []) {
+      if (device.status === "disconnected") {
+        voice.setKeys(device.serialNumber, []);
       }
     }
-  })
-}
+  });
 
-plugin.on('plugin.alive', payload => {
-  // console.log(plugin.getConfig(), 'hi')
-  if (plugin.getConfig()) {
-    // waitForConnection()
-  }
-})
+  plugin.on("ui.message", async (payload) => {
+    const command = typeof payload === "string" ? payload : payload?.command;
 
-/**
- * Called when received message from UI send by this.$fd.sendToBackend
- * @param {object} payload message sent from UI
- */
-plugin.on('ui.message', async payload => {
-  if (payload === 'authenticate') {
-    return await waitForConnection()
-  } else if (payload === 'disconnect-rpc') {
-    // Disconnect from RPC
-    if (rpc && rpc.connected) {
-      await rpc.disconnect().catch(console.error)
-      console.log('Disconnected from RPC')
-      return
-    } else {
-      console.log('RPC not connected')
-      return
+    switch (command) {
+      case "soundboard-catalog":
+        return connection.run(async (client) => {
+          const sounds = await client.getSoundboardSounds();
+          let guilds = [];
+          // Missing guild metadata must not prevent choosing an otherwise available sound.
+          try {
+            guilds = (await client.getGuilds()) || [];
+          } catch {
+            /* Group by guild ID instead. */
+          }
+
+          return { sounds, guilds, items: groupSounds(sounds, guilds) };
+        });
+
+      case "prepare-sound":
+        try {
+          return {
+            ok: true,
+            key: decorateKey(payload.key, await prepareSound(payload.sound)),
+          };
+        } catch (error) {
+          return { ok: false, error: error.message };
+        }
+
+      case "status":
+        return { ...connection.status(), voice: voice.status() };
+
+      case "save-settings":
+        return connection.saveSettings(payload);
+
+      case "authenticate":
+        return connection.authenticate();
+
+      case "disconnectDiscord":
+      case "disconnect-rpc":
+        return connection.disconnect();
+
+      case "getSounds":
+        return connection.run((client) => client.getSoundboardSounds());
+
+      case "getGuilds":
+        return connection.run(async (client) => await client.getGuilds());
+
+      case "mute":
+        return toggle("mute");
+
+      default:
+        throw new Error("Unknown Discord plugin command");
+    }
+  });
+
+  async function showError(payload, error) {
+    // Use the firmware's temporary toast. Redrawing a key to show an error can
+    // destroy an emoji/custom image if the host cannot reproduce its original artwork.
+    try {
+      await plugin._call("show-snackbar-message", {
+        serialNumber: payload.serialNumber,
+        msg: error.message.slice(0, 64),
+        level: "error",
+        icon: "warning",
+        timeout: 2500,
+      });
+    } catch {
+      /* Device disconnected. */
     }
   }
-  await waitForConnection()
-  // If message is getSounds, then wait for rpc connection and get soundboard sounds
-  if (payload === 'getSounds') {
-    const sounds = await rpc.getSoundboardSounds().catch(console.error)
-    // console.log('Sounds:', sounds)
-    return sounds
-  } else if (payload === 'getGuilds') {
-    // Get guilds
-    const guilds = await rpc.getGuilds().catch(console.error)
-    return guilds
-  } else if (payload === 'mute') {
-    // Get current user voice settings and toggle mute
-    const voiceSettings = await rpc.getVoiceSettings().catch(console.error)
-    if (!voiceSettings) return
-    if (voiceSettings.mute)
-      rpc.setVoiceSettings({ mute: false }).catch(console.error)
-    else rpc.setVoiceSettings({ mute: true }).catch(console.error)
-  }
-  logger.info('Received message from UI:', payload)
-  return 'Hello from plugin backend!'
-})
 
-/**
- * Called when user interacts with a key
- * @param {object} payload key data
- * {
- *  serialNumber,
- *  data
- * }
- */
-plugin.on('plugin.data', async payload => {
-  console.log(payload)
-  if (!rpc || !rpc.connected) {
-    console.log('RPC not connected')
-    await waitForConnection()
-  }
-  const data = payload.data
-  if (data.key.cid === 'com.corwindev.discord.soundboard') {
-    const key = data.key
-    // Play sound
-    rpc
-      .playSoundboardSound(key.data.sound.sound_id, key.data.sound.guild_id)
-      .catch(error => {
-        console.error('Error playing sound:', error)
-        showError(payload)
-      })
-  } else if (data.key.cid === 'com.corwindev.discord.mute') {
-    // Mute
-    const voiceSettings = await rpc.getVoiceSettings().catch(console.error)
-    if (!voiceSettings) return
-    if (voiceSettings.mute)
-      rpc.setVoiceSettings({ mute: false }).catch(error => {
-        showError(payload)
-      })
-    else
-      rpc.setVoiceSettings({ mute: true }).catch(error => {
-        showError(payload)
-      })
-  } else if (data.key.cid === 'com.corwindev.discord.deafen') {
-    // Deafen
-    const voiceSettings = await rpc.getVoiceSettings().catch(console.error)
-    if (!voiceSettings) return
-    if (voiceSettings.deaf)
-      rpc.setVoiceSettings({ deaf: false }).catch(error => {
-        showError(payload)
-      })
-    else
-      rpc.setVoiceSettings({ deaf: true }).catch(error => {
-        showError(payload)
-      })
-  } else if (data.key.cid === 'com.corwindev.discord.camera') {
-    // Toggle camera
-    await rpc.toggleVideo().catch(error => {
-      showError(payload)
-    })
-  }
-})
+  plugin.on("plugin.data", async (payload) => {
+    const key = payload?.data?.key;
 
-/**
- * Shows X when a key is executed but fails
- * @param {object} payload key data
- */
-function showError (payload) {
-  const key = payload.data.key
-  const oldData = structuredClone(key)
-  key.style.showIcon = true
-  key.style.icon = 'mdi mdi-alert-circle-outline'
-  key.style.bgColor = '#fa0505'
-  plugin.draw(payload.serialNumber, key, 'draw')
-  setTimeout(() => {
-    plugin.draw(payload.serialNumber, oldData, 'draw')
-  }, 1000)
+    try {
+      switch (key?.cid) {
+        case "com.corwindev.discord.soundboard": {
+          // Old daemon bindings remain readable, but new selections belong to the key.
+          const saved = key.data?.sound ? null : await plugin.getConfig();
+          const sound = soundData(
+            key.data?.sound || saved?.soundboardBindings?.[key.uid] || key.data,
+          );
+
+          await connection.run((client) =>
+            client.playSoundboardSound(sound.sound_id, sound.guild_id || "0"),
+          );
+
+          break;
+        }
+
+        case "com.corwindev.discord.mute":
+          await toggle("mute");
+          break;
+
+        case "com.corwindev.discord.deafen":
+          await toggle("deaf");
+          break;
+
+        case "com.corwindev.discord.camera":
+          await connection.run((client) => client.toggleVideo());
+          break;
+
+        default:
+          throw new Error("Unknown Discord key");
+      }
+
+      return { status: "success" };
+    } catch (error) {
+      console.warn(`Discord action failed: ${error.message}`);
+      await showError(payload, error);
+
+      throw error;
+    }
+  });
+
+  return () => {
+    voice.stop();
+    connection.stop();
+    plugin.stop();
+  };
 }
 
-// Connect to flexdesigner and start the plugin
-plugin.start()
+const stop = registerPlugin(plugin);
+
+process.once("SIGTERM", stop);
+process.once("SIGINT", stop);
+plugin.start();
